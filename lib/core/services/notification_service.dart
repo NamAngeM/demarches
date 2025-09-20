@@ -1,275 +1,174 @@
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:permission_handler/permission_handler.dart';
-import '../../domain/entities/guide.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz;
+import '../../domain/entities/checklist_item.dart';
 
 class NotificationService {
-  static final NotificationService _instance = NotificationService._internal();
-  factory NotificationService() => _instance;
-  NotificationService._internal();
+  static NotificationService? _instance;
+  static NotificationService get instance => _instance ??= NotificationService._();
+  NotificationService._();
 
-  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
-  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
 
-  bool _isInitialized = false;
-
-  // Initialiser le service de notifications
+  /// Initialise le service de notifications
   Future<void> initialize() async {
-    if (_isInitialized) return;
+    // Initialiser timezone
+    tz.initializeTimeZones();
+    tz.setLocalLocation(tz.getLocation('Europe/Paris'));
 
-    try {
-      // Demander les permissions
-      await _requestPermissions();
-
-      // Initialiser les notifications locales
-      await _initializeLocalNotifications();
-
-      // Configurer Firebase Messaging
-      await _configureFirebaseMessaging();
-
-      _isInitialized = true;
-    } catch (e) {
-      print('Erreur lors de l\'initialisation des notifications: $e');
-    }
-  }
-
-  // Demander les permissions
-  Future<void> _requestPermissions() async {
-    // Permission pour les notifications
-    final notificationStatus = await Permission.notification.request();
-    if (notificationStatus != PermissionStatus.granted) {
-      print('Permission de notification refusée');
-    }
-
-    // Permission pour Firebase Messaging
-    final messagingStatus = await _firebaseMessaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-
-    if (messagingStatus.authorizationStatus != AuthorizationStatus.authorized) {
-      print('Permission Firebase Messaging refusée');
-    }
-  }
-
-  // Initialiser les notifications locales
-  Future<void> _initializeLocalNotifications() async {
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    const DarwinInitializationSettings initializationSettingsIOS =
-        DarwinInitializationSettings(
+    // Configuration Android
+    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    
+    // Configuration iOS
+    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
     );
 
-    const InitializationSettings initializationSettings =
-        InitializationSettings(
-      android: initializationSettingsAndroid,
-      iOS: initializationSettingsIOS,
+    const InitializationSettings settings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
     );
 
-    await _localNotifications.initialize(
-      initializationSettings,
+    await _notifications.initialize(
+      settings,
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
+
+    // Demander les permissions
+    await _requestPermissions();
   }
 
-  // Configurer Firebase Messaging
-  Future<void> _configureFirebaseMessaging() async {
-    // Gérer les messages en arrière-plan
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  /// Demande les permissions de notification
+  Future<void> _requestPermissions() async {
+    await _notifications
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
 
-    // Gérer les messages en premier plan
-    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
-
-    // Gérer les notifications tapées
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationOpened);
-
-    // Obtenir le token FCM
-    final token = await _firebaseMessaging.getToken();
-    print('Token FCM: $token');
+    await _notifications
+        .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
   }
 
-  // Gérer les messages en premier plan
-  Future<void> _handleForegroundMessage(RemoteMessage message) async {
-    print('Message reçu en premier plan: ${message.notification?.title}');
-    
-    // Afficher une notification locale
-    await _showLocalNotification(
-      title: message.notification?.title ?? 'Nouvelle notification',
-      body: message.notification?.body ?? 'Vous avez reçu une nouvelle notification',
-      payload: message.data.toString(),
-    );
-  }
-
-  // Gérer les notifications tapées
-  void _handleNotificationOpened(RemoteMessage message) {
-    print('Notification tapée: ${message.notification?.title}');
-    // TODO: Naviguer vers la page appropriée
-  }
-
-  // Gérer les notifications locales tapées
+  /// Gère le tap sur une notification
   void _onNotificationTapped(NotificationResponse response) {
-    print('Notification locale tapée: ${response.payload}');
-    // TODO: Naviguer vers la page appropriée
+    // Navigation vers la page appropriée selon l'ID de la notification
+    print('Notification tapped: ${response.payload}');
   }
 
-  // Afficher une notification locale
-  Future<void> _showLocalNotification({
-    required String title,
-    required String body,
-    String? payload,
-  }) async {
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'demarches_app',
-      'Démarches App',
-      channelDescription: 'Notifications pour les guides et mises à jour',
-      importance: Importance.high,
-      priority: Priority.high,
-      icon: '@mipmap/ic_launcher',
-    );
+  /// Programme une notification de rappel pour un élément de checklist
+  Future<void> scheduleReminder(ChecklistItem item) async {
+    if (item.dueDate == null) return;
 
-    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    const NotificationDetails details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _localNotifications.show(
-      DateTime.now().millisecondsSinceEpoch.remainder(100000),
-      title,
-      body,
-      details,
-      payload: payload,
-    );
-  }
-
-  // Notifier un nouveau guide
-  Future<void> notifyNewGuide(Guide guide) async {
-    await _showLocalNotification(
-      title: 'Nouveau guide disponible!',
-      body: '${guide.title} - ${guide.categoryDisplayName}',
-      payload: 'guide:${guide.id}',
-    );
-  }
-
-  // Notifier des guides mis à jour
-  Future<void> notifyUpdatedGuides(List<Guide> guides) async {
-    if (guides.isEmpty) return;
-
-    final title = guides.length == 1 
-        ? 'Guide mis à jour'
-        : '${guides.length} guides mis à jour';
+    // Programmer une notification 7 jours avant l'échéance
+    final reminderDate = item.dueDate!.subtract(const Duration(days: 7));
     
-    final body = guides.length == 1
-        ? guides.first.title
-        : 'Découvrez les dernières mises à jour';
-
-    await _showLocalNotification(
-      title: title,
-      body: body,
-      payload: 'guides_updated',
-    );
-  }
-
-  // Notifier la progression d'un guide
-  Future<void> notifyGuideProgress(String guideTitle, int percentage) async {
-    if (percentage == 100) {
-      await _showLocalNotification(
-        title: 'Félicitations!',
-        body: 'Vous avez terminé le guide "$guideTitle"',
-        payload: 'guide_completed',
-      );
-    } else if (percentage % 25 == 0 && percentage > 0) {
-      await _showLocalNotification(
-        title: 'Progression du guide',
-        body: 'Vous avez terminé $percentage% du guide "$guideTitle"',
-        payload: 'guide_progress',
+    if (reminderDate.isAfter(DateTime.now())) {
+      await _scheduleNotification(
+        id: item.id.hashCode,
+        title: 'Rappel: ${item.title}',
+        body: 'Cette démarche est due dans 7 jours. N\'oubliez pas de la terminer !',
+        scheduledDate: reminderDate,
+        payload: 'checklist_${item.id}',
       );
     }
-  }
 
-  // Notifier un rappel de guide
-  Future<void> notifyGuideReminder(String guideTitle) async {
-    await _showLocalNotification(
-      title: 'Rappel de guide',
-      body: 'N\'oubliez pas de continuer le guide "$guideTitle"',
-      payload: 'guide_reminder',
+    // Programmer une notification le jour de l'échéance
+    await _scheduleNotification(
+      id: item.id.hashCode + 1000,
+      title: 'URGENT: ${item.title}',
+      body: 'Cette démarche est due aujourd\'hui !',
+      scheduledDate: item.dueDate!,
+      payload: 'checklist_${item.id}',
     );
   }
 
-  // Programmer une notification de rappel
-  Future<void> scheduleGuideReminder(String guideTitle, Duration delay) async {
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'demarches_app_reminders',
-      'Rappels de guides',
-      channelDescription: 'Rappels pour continuer vos guides',
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
-    );
-
-    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    const NotificationDetails details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _localNotifications.zonedSchedule(
-      DateTime.now().add(delay).millisecondsSinceEpoch.remainder(100000),
-      'Rappel de guide',
-      'N\'oubliez pas de continuer le guide "$guideTitle"',
-      tz.TZDateTime.now(tz.local).add(delay),
-      details,
-      payload: 'guide_reminder',
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+  /// Programme une notification personnalisée
+  Future<void> _scheduleNotification({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime scheduledDate,
+    String? payload,
+  }) async {
+    await _notifications.zonedSchedule(
+      id,
+      title,
+      body,
+      tz.TZDateTime.from(scheduledDate, tz.local),
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          'checklist_reminders',
+          'Rappels de démarches',
+          channelDescription: 'Notifications pour les rappels de démarches étudiantes',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+        ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+      payload: payload,
       uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 
-  // Annuler toutes les notifications programmées
-  Future<void> cancelAllScheduledNotifications() async {
-    await _localNotifications.cancelAll();
+  /// Annule une notification
+  Future<void> cancelNotification(int id) async {
+    await _notifications.cancel(id);
   }
 
-  // Obtenir le token FCM
-  Future<String?> getFCMToken() async {
-    return await _firebaseMessaging.getToken();
+  /// Annule toutes les notifications
+  Future<void> cancelAllNotifications() async {
+    await _notifications.cancelAll();
   }
 
-  // S'abonner à un topic
-  Future<void> subscribeToTopic(String topic) async {
-    await _firebaseMessaging.subscribeToTopic(topic);
+  /// Programme des notifications pour tous les éléments de checklist
+  Future<void> scheduleAllReminders(List<ChecklistItem> items) async {
+    for (final item in items) {
+      if (item.dueDate != null && item.status != ChecklistStatus.completed) {
+        await scheduleReminder(item);
+      }
+    }
   }
 
-  // Se désabonner d'un topic
-  Future<void> unsubscribeFromTopic(String topic) async {
-    await _firebaseMessaging.unsubscribeFromTopic(topic);
+  /// Programme une notification de bienvenue
+  Future<void> scheduleWelcomeNotification() async {
+    await _scheduleNotification(
+      id: 9999,
+      title: 'Bienvenue dans Démarches App !',
+      body: 'Commencez par consulter votre checklist personnalisée.',
+      scheduledDate: DateTime.now().add(const Duration(seconds: 5)),
+      payload: 'welcome',
+    );
   }
 
-  // Configurer les topics par défaut
-  Future<void> setupDefaultTopics() async {
-    await subscribeToTopic('new_guides');
-    await subscribeToTopic('guide_updates');
-    await subscribeToTopic('general_announcements');
+  /// Programme une notification de progression
+  Future<void> scheduleProgressNotification(int completedCount, int totalCount) async {
+    if (completedCount == totalCount) {
+      await _scheduleNotification(
+        id: 9998,
+        title: '🎉 Félicitations !',
+        body: 'Vous avez terminé toutes vos démarches !',
+        scheduledDate: DateTime.now().add(const Duration(seconds: 2)),
+        payload: 'congratulations',
+      );
+    } else if (completedCount > 0 && completedCount % 3 == 0) {
+      await _scheduleNotification(
+        id: 9997,
+        title: '👍 Bon travail !',
+        body: 'Vous avez terminé $completedCount/$totalCount démarches. Continuez !',
+        scheduledDate: DateTime.now().add(const Duration(seconds: 2)),
+        payload: 'progress',
+      );
+    }
   }
-}
-
-// Gestionnaire de messages en arrière-plan
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  print('Message en arrière-plan: ${message.notification?.title}');
-  // TODO: Traiter le message en arrière-plan
 }
