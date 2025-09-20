@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-import 'presentation/pages/home_page.dart';
-import 'presentation/pages/guides_page_improved.dart';
-import 'presentation/pages/profile_page_improved.dart';
-import 'presentation/pages/checklist_page_improved.dart';
+import 'core/design/french_design_system.dart';
+import 'presentation/pages/french_home_page.dart';
+import 'presentation/pages/french_guides_page.dart';
+import 'presentation/pages/french_profile_page.dart';
+import 'presentation/pages/french_checklist_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,11 +28,9 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Démarches App',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
+      title: 'Student Guide France',
+      theme: FrenchDesignSystem.lightTheme,
+      debugShowCheckedModeBanner: false,
       home: const MainNavigationPage(),
     );
   }
@@ -48,10 +47,10 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   int _selectedIndex = 0;
 
   final List<Widget> _pages = [
-    const HomePage(),
-    const ChecklistPage(),
-    const GuidesPage(),
-    const ProfilePage(),
+    const FrenchHomePage(),
+    const FrenchChecklistPage(),
+    const FrenchGuidesPage(),
+    const FrenchProfilePage(),
   ];
 
   @override
